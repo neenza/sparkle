@@ -1,18 +1,56 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GEMINI_API_KEY } from '@env';
+import ApiKeyService from './ApiKeyService';
 
 class GeminiService {
   constructor() {
     console.log('Initializing GeminiService...');
-    if (!GEMINI_API_KEY) {
-      console.error('API_KEY environment variable is not set');
-      throw new Error('API_KEY environment variable is not set');
-    }
-    console.log('API Key found, length:', GEMINI_API_KEY.length);
-    this.API_KEY = GEMINI_API_KEY;
-    this.genAI = new GoogleGenerativeAI(this.API_KEY);
+    this.genAI = null;
     this.pdfContent = null;
-    console.log('GeminiService initialized successfully');
+    this.initialized = false;
+  }
+
+  // Initialize the Gemini API with the stored key
+  async initialize() {
+    try {
+      const apiKey = await ApiKeyService.getApiKey();
+      if (!apiKey) {
+        console.warn('No Gemini API key found in storage');
+        this.initialized = false;
+        return false;
+      }
+      
+      console.log('API Key found, length:', apiKey.length);
+      this.API_KEY = apiKey;
+      this.genAI = new GoogleGenerativeAI(this.API_KEY);
+      this.initialized = true;
+      console.log('GeminiService initialized successfully');
+      return true;
+    } catch (error) {
+      console.error('Error initializing GeminiService:', error);
+      this.initialized = false;
+      return false;
+    }
+  }
+
+  // Check if API is initialized
+  isInitialized() {
+    return this.initialized;
+  }
+
+  // Update API key and reinitialize
+  async updateApiKey(newApiKey) {
+    try {
+      if (!newApiKey) {
+        console.warn('Attempted to update with empty API key');
+        return false;
+      }
+      
+      await ApiKeyService.saveApiKey(newApiKey);
+      return await this.initialize();
+    } catch (error) {
+      console.error('Error updating API key:', error);
+      return false;
+    }
   }
 
   setPdfContent(content) {
@@ -29,20 +67,42 @@ class GeminiService {
     return this.pdfContent;
   }
 
-  async queryPdfContent(question) {
+  async queryPdfContent(question, chatHistory = []) {
     console.log('Starting AI query with question:', question);
+    
     try {
+      if (!this.initialized) {
+        const initialized = await this.initialize();
+        if (!initialized) {
+          return 'Please set your Gemini API key in the sidebar settings before using the chat feature.';
+        }
+      }
+
       if (!this.pdfContent) {
         console.warn('No PDF content loaded');
         return 'No PDF content loaded. Please upload a PDF first.';
       }
 
-      console.log('Preparing prompt with PDF content...');
-      const prompt = `
+      // Format chat history for the prompt
+      let chatHistoryText = '';
+      if (chatHistory && chatHistory.length > 0) {
+        chatHistoryText = chatHistory
+          .filter(msg => !msg.isSystemMessage) // Skip system messages
+          .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
+          .join('\n\n');
+          
+        console.log('Including chat history with', chatHistory.length, 'messages');
+      }
+
+      // Create prompt with PDF content and chat history
+      console.log('Preparing prompt with PDF content and chat history...');
+      let prompt = `
         I have the following PDF content:
         ${this.pdfContent}
         
-        Based on this PDF content, please answer the following question:
+        ${chatHistoryText ? 'Here is our conversation so far:\n' + chatHistoryText + '\n\n' : ''}
+        
+        Based on this PDF content and our conversation history, please answer the following question:
         ${question}
       `;
       console.log('Prompt prepared, length:', prompt.length);
@@ -68,6 +128,65 @@ class GeminiService {
         message: error.message,
         stack: error.stack
       });
+      
+      if (error.message && error.message.includes('API key')) {
+        return 'Invalid API key. Please check your Gemini API key in the sidebar settings.';
+      }
+      
+      return 'Sorry, I encountered an error processing your request. Please try again.';
+    }
+  }
+
+  // Update the simulated streaming function to also include chat history
+  async streamPdfContent(question, onTokenReceived, chatHistory = []) {
+    try {
+      if (!this.initialized) {
+        const initialized = await this.initialize();
+        if (!initialized) {
+          return 'Please set your Gemini API key in the sidebar settings before using the chat feature.';
+        }
+      }
+
+      if (!this.pdfContent) {
+        console.warn('No PDF content loaded');
+        return 'No PDF content loaded. Please upload a PDF first.';
+      }
+
+      // Format chat history for the prompt
+      let chatHistoryText = '';
+      if (chatHistory && chatHistory.length > 0) {
+        chatHistoryText = chatHistory
+          .filter(msg => !msg.isSystemMessage) // Skip system messages
+          .map(msg => `${msg.isUser ? 'User' : 'Assistant'}: ${msg.text}`)
+          .join('\n\n');
+          
+        console.log('Including chat history with', chatHistory.length, 'messages');
+      }
+
+      console.log('Preparing prompt for streaming...');
+      const prompt = `
+        I have the following PDF content:
+        ${this.pdfContent}
+        
+        ${chatHistoryText ? 'Here is our conversation so far:\n' + chatHistoryText + '\n\n' : ''}
+        
+        Based on this PDF content and our conversation history, please answer the following question:
+        ${question}
+      `;
+
+      // ...rest of the simulated streaming implementation...
+    } catch (error) {
+      console.error('Error in streamPdfContent:', error);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      
+      if (error.message && error.message.includes('API key')) {
+        return 'Invalid API key. Please check your Gemini API key in the sidebar settings.';
+      }
+      
       return 'Sorry, I encountered an error processing your request. Please try again.';
     }
   }
